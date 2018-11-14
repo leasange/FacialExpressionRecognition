@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+    <ImageView
+        android:layout_width="100dp"
+        android:layout_height="85dp"
+        android:id="@+id/detect_image"/>
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="25dp"
+        android:hint="表情"
+        android:maxWidth="100dp"
+        android:layout_gravity="center_horizontal"
+        android:id="@+id/detect_rstext"/>
+</LinearLayout>

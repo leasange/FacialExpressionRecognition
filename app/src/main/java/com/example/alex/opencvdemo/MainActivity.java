@@ -1,36 +1,46 @@
 package com.example.alex.opencvdemo;
 
 import android.Manifest;
+import android.annotation.TargetApi;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
-import android.os.Environment;
+import android.os.Build;
 import android.os.Handler;
-import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
-import android.widget.ImageView;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.view.View.OnClickListener;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.tbruyelle.rxpermissions2.Permission;
 import com.tbruyelle.rxpermissions2.RxPermissions;
 
-import org.opencv.android.BaseLoaderCallback;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.opencv.android.CameraBridgeViewBase;
-import org.opencv.android.JavaCameraView;
-import org.opencv.android.LoaderCallbackInterface;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -42,14 +52,24 @@ import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
 import org.opencv.core.Rect;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import io.reactivex.functions.Consumer;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class MainActivity extends AppCompatActivity implements CameraBridgeViewBase.CvCameraViewListener2{
     static {
@@ -58,23 +78,32 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             Log.d("opencv","初始化失败");
         }
     }
+    //首先还是先声明这个Spinner控件
+    private Spinner apiSpinner;
+    //定义一个String类型的List数组作为数据源
+    private List<String> apiDataList;
+    //定义一个ArrayAdapter适配器作为spinner的数据适配器
+    private ArrayAdapter<String> apiAdapter;
+    private  String selectedApi=null;
 
     private int detectModel=0;//0未知，1选择图片识别，2抓图识别，3实时识别
-    private  Thread threadDetect;//定时执行的任务
+    private  boolean needChangeModel=false;
+    private  Thread threadDetect=null;//定时执行的任务
     private boolean brunning=true;//标志是否在运行
-    private Uri chooseImageUrl;//选择图片地址
+    private Bitmap chooseImage=null;//选择图片
+    private int detectIndex=0;//当前显示编号
+
+    private  Bitmap cameraImage=null;//摄像头图片
 
     private CameraBridgeViewBase cameraView;
-    private TextView reslutTextView;
-    private Classifier classifier;//识别类
+    private Classifier classifier=null;//识别类
     private static final String MODEL_FILE = "file:///android_asset/FacialExpressionReg.pb";
     private static final int IMAGE_SIZE = 48;
 
-    public static final int TAKE_PHOTO = 1;
+    public  static  final  int CHOOSE_PHOTO=2;
     private CascadeClassifier cascadeClassifier = null; //级联分类器
     private int absoluteFaceSize = 0;
-    Mat  mRgba;
-    Mat  mGray;
+    private Handler detectHandleUpdate=null;
 
     public static Bitmap toGrayscale(Bitmap bmpOriginal) {
         int width, height;
@@ -165,50 +194,17 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         return null;
 
     }
-    private  String faceResult="";
-    private void detectFace(Bitmap bitmap)
+    //检测图片
+    private String detectFaceEmotion(Bitmap bitmap,Rect[] facesArray)
     {
-        Mat img = new Mat();
-        Utils.bitmapToMat(bitmap, img);
-
-        Mat imgGray = new Mat();;
-        MatOfRect faces = new MatOfRect();
-
-        if(img.empty())
-        {
-            Log.d("ccx","detectFace but img is empty");
-            return;
-        }
-
-        if(img.channels() ==3)
-        {
-            Imgproc.cvtColor(img, imgGray, Imgproc.COLOR_RGB2GRAY);
-        }
-        else
-        {
-            imgGray = img;
-        }
-
-        cascadeClassifier.detectMultiScale(imgGray, faces, 1.1, 2, 2, new Size(absoluteFaceSize, absoluteFaceSize), new Size());
-
-        Rect[] facesArray = faces.toArray();
-        if (facesArray.length > 0){
-            for (int i = 0; i < facesArray.length; i++) {
-                Imgproc.rectangle(imgGray, facesArray[i].tl(), facesArray[i].br(), new Scalar(0, 255, 0, 255), 3);
-                Log.d("ccx","index:" + i + "topLeft:" + facesArray[i].tl() + "bottomRight:" + facesArray[i].br()+ "height:" + facesArray[i].height);
-            }
-        }else{
-            return;
-        }
-
-        Utils.matToBitmap(imgGray, bitmap);
-        //imageView.setImageBitmap(bitmap);
+        if ( facesArray==null)return  null;
         Bitmap destBitmap = Bitmap.createBitmap(bitmap, (int) (facesArray[0].tl().x), (int) (facesArray[0].tl().y), facesArray[0].width, facesArray[0].height);
         Bitmap scaleImage = scaleImage(destBitmap, 48, 48);
         Bitmap bitmap5 = toGrayscale(scaleImage);
         Bitmap bitmap6 = adjustPhotoRotation(bitmap5, 270);
-
-        classifier = new Classifier(getAssets(),MODEL_FILE);
+        if (classifier==null){
+            classifier = new Classifier(getAssets(),MODEL_FILE);
+        }
         ArrayList<String> result = classifier.predict(getSingleChannelPixel(bitmap6));
         //0=Angry, 1=Disgust, 2=Fear, 3=Happy, 4=Sad, 5=Surprise, 6=Neutral
        String str = result.get(0);
@@ -230,8 +226,154 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             default:
                 Log.d("ccx","Tensorflow return is error.");;break;
         }
-        faceResult=str;
-        reslutTextView.setText("识别结果: " + faceResult);
+        return  str;
+    }
+
+    //检测人脸
+    private  Rect[]  detectFaceRect(Bitmap bitmap){
+        Mat img = new Mat();
+        Utils.bitmapToMat(bitmap, img);
+
+        Mat imgGray = new Mat();
+        MatOfRect faces = new MatOfRect();
+
+        if(img.empty())
+        {
+            Log.d("ccx","detectFace but img is empty");
+            return null;
+        }
+
+        if(img.channels() ==3)
+        {
+            Imgproc.cvtColor(img, imgGray, Imgproc.COLOR_RGB2GRAY);
+        }
+        else
+        {
+            imgGray = img;
+        }
+
+        cascadeClassifier.detectMultiScale(imgGray, faces, 1.1, 2, 2, new Size(absoluteFaceSize, absoluteFaceSize), new Size());
+
+        Rect[] facesArray = faces.toArray();
+        if (facesArray.length > 0){
+            for (int i = 0; i < facesArray.length; i++) {
+                Imgproc.rectangle(imgGray, facesArray[i].tl(), facesArray[i].br(), new Scalar(0, 255, 0, 255), 3);
+                Log.d("ccx","index:" + i + "topLeft:" + facesArray[i].tl() + "bottomRight:" + facesArray[i].br()+ "height:" + facesArray[i].height);
+            }
+        }else{
+            return null;
+        }
+        Utils.matToBitmap(imgGray, bitmap);
+        return  facesArray;
+    }
+
+    private  String detectFaceEmotion(Bitmap bitmap){
+        if(selectedApi.equals("Face++")){
+            return  detectFaceEmotionByFaceCPP(bitmap);
+        }else{
+            Rect[] facesArray=detectFaceRect(bitmap);
+            return  detectFaceEmotion(bitmap,facesArray);
+        }
+    }
+    private  String detectResult=null;
+    private String detectFaceEmotionByFaceCPP(Bitmap bitmap){
+        try{
+            detectResult=null;
+            OkHttpClient client = new OkHttpClient();
+            // form 表单形式上传
+            MultipartBody.Builder requestBody = new MultipartBody.Builder().setType(MultipartBody.FORM);
+            requestBody.addFormDataPart("api_key","six6aKZ9f6pNupm9XZ4HqOsoeSDCRngu");
+            requestBody.addFormDataPart("api_secret","6MrBjWsqZXcwT04L-Z99Iah1zF3qUpLi");
+            requestBody.addFormDataPart("return_attributes","emotion");
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
+            // MediaType.parse() 里面是上传的文件类型。
+            RequestBody body = RequestBody.create(MediaType.parse("image/*"), baos.toByteArray());
+            // 参数分别为， 请求key ，文件名称 ， RequestBody
+            requestBody.addFormDataPart("image_file", "imagefile", body);
+            Request request = new Request.Builder().url("https://api-cn.faceplusplus.com/facepp/v3/detect").post(requestBody.build()).tag(null).build();
+            // readTimeout("请求超时时间" , 时间单位);
+            Call call = client.newBuilder().readTimeout(8000, TimeUnit.MILLISECONDS).build().newCall(request);
+            try {
+                Response response=call.execute();
+                if (response.isSuccessful()){
+                    String str = response.body().string();
+                    Log.i("FACE++", response.message() + " , body " + str);
+                    /*
+                    {
+                      "image_id": "B7B3u1yn5FThJtP2uDnJtQ==",
+                      "request_id": "1542190044,47db8847-263b-42fe-8e26-0c4f646b2446",
+                      "time_used": 228,
+                      "faces": [
+                        {
+                          "attributes": {
+                            "emotion": {
+                              "sadness": 0.07,
+                              "neutral": 6.487,
+                              "disgust": 0.452,
+                              "anger": 0.034,
+                              "surprise": 0.059,
+                              "fear": 15.858,
+                              "happiness": 77.04
+                            }
+                          },
+                          "face_rectangle": {
+                            "width": 58,
+                            "top": 49,
+                            "left": 54,
+                            "height": 58
+                          },
+                          "face_token": "4733a62474eeffecc9e254edbca97661"
+                        }
+                      ]
+                    }
+                     */
+                    try {
+                        JSONObject jsonObject=new JSONObject(str);
+                        JSONObject resObject = jsonObject.getJSONArray("faces").getJSONObject(0);
+                        JSONObject emotion = resObject.getJSONObject("attributes").getJSONObject("emotion");
+                        JSONObject face_rectangle = resObject.getJSONObject("face_rectangle");
+                        double sadness=emotion.getDouble("sadness");
+                        double neutral=emotion.getDouble("neutral");
+                        double disgust=emotion.getDouble("disgust");
+                        double anger=emotion.getDouble("anger");
+                        double surprise=emotion.getDouble("surprise");
+                        double fear=emotion.getDouble("fear");
+                        double happiness=emotion.getDouble("happiness");
+                        double ret = Math.max(Math.max(Math.max(Math.max(Math.max(Math.max(sadness,neutral),disgust),anger),surprise),fear),happiness);
+                        if ( ret == sadness){
+                            detectResult="难过";
+                        }else if (ret==neutral){
+                            detectResult="平静";
+                        }
+                        else if (ret==disgust){
+                            detectResult="厌恶";
+                        }
+                        else if (ret==anger){
+                            detectResult="生气";
+                        }
+                        else if (ret==surprise){
+                            detectResult="惊讶";
+                        }
+                        else if (ret==surprise){
+                            detectResult="恐惧";
+                        }
+                        else if (ret==happiness){
+                            detectResult="高兴";
+                        }
+                    }catch (Exception ex){
+                        Log.e("FACE++", "onResponse: ",ex );
+                    }
+                }
+
+            } catch (IOException e) {
+                Log.e("Face++", "detectFaceEmotionByFaceCPP json: ", e);
+            }
+        }catch (Exception ex){
+            Log.e("Face++", "detectFaceEmotionByFaceCPP: ", ex);
+        }
+
+        return detectResult;
     }
 
     private void initializeOpenCVDependencies() {
@@ -267,44 +409,67 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     private  Mat matLin=new Mat();//临时图像对象
     @Override
     public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
-        mRgba = inputFrame.rgba();
-       // mGray = inputFrame.gray();
-        /*
-        try{
-            Core.transpose(mRgba, matLin);
-         //  int h = cameraView.getHeight()/cameraView.getWidth()*mRgba.height();
-         //  int w =mRgba.width();
-            Core.flip(matLin, mRgba, 1);
-            //转置函数,将图像顺时针顺转（对换）
-            Core.flip(mRgba, matLin, 0);
-            mRgba = matLin;
-
-           // Core.flip(mRgba, mRgba, 1);//flip aroud Y-axis
-            //  Core.flip(mRgba, mRgba, 1);//flip aroud Y-axis
-            //  Core.flip(mGray, mGray, 1);
-            Bitmap bitmap=Bitmap.createBitmap(mRgba.width(), mRgba.height(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mRgba,bitmap);
-            detectFace(bitmap);
-            Utils.bitmapToMat(bitmap,mRgba);
-          //  Imgproc.resize(mRgba,mRgba, new Size(w,h), 0.0D, 0.0D, 0); //将转置后的图像缩放为mRgbaF的大小
-        }catch (Exception ex){
-            Log.e("frame",ex.getMessage(),ex);
-        }*/
-        return mRgba;
+        if (!needChangeModel){
+            switch (detectModel){
+                case 2:
+                case 3:
+                    Mat  temp=inputFrame.rgba();
+                    try{
+                        Core.transpose(temp, matLin);
+                        Core.flip(matLin, temp, 1);
+                        //转置函数,将图像顺时针顺转（对换）
+                        Core.flip(temp, matLin, 0);
+                        temp = matLin;
+                        Bitmap bitmap=Bitmap.createBitmap(temp.width(), temp.height(), Bitmap.Config.ARGB_8888);
+                        Utils.matToBitmap(temp,bitmap);
+                        cameraImage=bitmap;
+                        if (detectModel==2){
+                            detectModel=98;
+                        }
+                        if (detectModel==3){
+                            detectModel=99;
+                        }
+                    }catch (Exception ex){
+                        Log.e("frame",ex.getMessage(),ex);
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+        return  inputFrame.rgba();
     }
 
     private void doExcuteDetect(){
-        switch (detectModel){
-            case 1:
-            {
-                if (chooseImageUrl==null)return;
-
+        try{
+            switch (detectModel){
+                case 1:
+                {
+                    if ( null == chooseImage )return;
+                    String ret =  detectFaceEmotion(chooseImage);
+                    displayResult(chooseImage,ret);
+                    chooseImage=null;
+                }
+                break;
+                case 98:
+                case 99:
+                {
+                    if (null==cameraImage)return;
+                    String ret =  detectFaceEmotion(cameraImage);
+                    displayResult(cameraImage,ret);
+                    cameraImage=null;
+                    if (detectModel==99){
+                        detectModel=3;
+                    }
+                }
+                break;
             }
-                break;
-            case 2:
-                break;
-            case 3:
-                break;
+        }catch (Exception ex){
+            Log.e("Excute", "doExcuteDetect: ", ex);
+        }
+        finally {
+            cameraImage=null;
+            chooseImage=null;
         }
     }
     @Override
@@ -323,46 +488,215 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         }catch (Exception ex){
             Log.e("Exit", "onDestroy: ",ex );
         }
-    };
+    }
 
     class MyClickListener implements OnClickListener{
         @Override
         public void onClick(View v) {
             // TODO Auto-generated method stub
-            switch (v.getId()) {
-                case  R.id.choose_image:
-                    detectModel=1;
-                    break;
-                case R.id.capture_image:
-                    detectModel=2;
-                    break;
-                case  R.id.real_image:
-                    detectModel=3;
-                    break;
-                default:
-                    break;
+            try{
+                switch (v.getId()) {
+                    case  R.id.choose_image:
+                        if (cameraImage!=null||chooseImage!=null){
+                            needChangeModel=true;
+                            Thread.sleep(200);
+                            if (cameraImage!=null||chooseImage!=null) {
+                                return;
+                            }
+                        }
+                        detectModel=1;
+                        needChangeModel=false;
+                        findViewById(R.id.choose_image).setSelected(true);
+                        findViewById(R.id.capture_image).setSelected(false);
+                        findViewById(R.id.real_image).setSelected(false);
+                        openAlbum();
+                        break;
+                    case R.id.capture_image:
+                        if (cameraImage!=null||chooseImage!=null){
+                            needChangeModel=true;
+                            Thread.sleep(200);
+                            if (cameraImage!=null||chooseImage!=null) {
+                                return;
+                            }
+                        }
+                        detectModel=2;
+                        needChangeModel=false;
+                        findViewById(R.id.choose_image).setSelected(false);
+                        findViewById(R.id.capture_image).setSelected(true);
+                        findViewById(R.id.real_image).setSelected(false);
+                        break;
+                    case  R.id.real_image:
+                        if (cameraImage!=null||chooseImage!=null){
+                            needChangeModel=true;
+                            Thread.sleep(200);
+                            if (cameraImage!=null||chooseImage!=null) {
+                                return;
+                            }
+                        }
+                        detectModel=3;
+                        needChangeModel=false;
+                        findViewById(R.id.choose_image).setSelected(false);
+                        findViewById(R.id.capture_image).setSelected(false);
+                        findViewById(R.id.real_image).setSelected(true);
+                        break;
+                    default:
+                        break;
+                }
+            }catch (Exception ex){
+
             }
         }
-
+    }
+    private void openAlbum(){
+        Intent intent = new Intent("android.intent.action.GET_CONTENT");
+        intent.setType("image/*");
+        startActivityForResult(intent,CHOOSE_PHOTO);//打开相册
+    }
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        switch (requestCode){/*
+            case TAKE_PHOTO:
+                if (resultCode == RESULT_OK){
+                    try {
+                        //将拍摄的照片显示出来
+                        Bitmap bitmap = BitmapFactory.decodeStream(getContentResolver().openInputStream(imageUri));
+                        picture.setImageBitmap(bitmap);
+                    }catch (FileNotFoundException e){
+                        e.printStackTrace();
+                    }
+                }
+                break;*/
+            case CHOOSE_PHOTO:
+                if (resultCode == RESULT_OK){
+                    //判断手机系统版本号
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT){
+                        //4.4及以上系统使用这个方法处理图片
+                        handleImageOnKitKat(data);
+                    }else {
+                        //4.4以下系统使用这个放出处理图片
+                        handleImageBeforeKitKat(data);
+                    }
+                }
+                break;
+            default:
+                break;
+        }
     }
 
+    @TargetApi(Build.VERSION_CODES.KITKAT)
+    private void handleImageOnKitKat(Intent data){
+        String imagePath = null;
+        Uri uri = data.getData();
+        if (DocumentsContract.isDocumentUri(this,uri)){
+            //如果是document类型的Uri,则通过document id处理
+            String docId = DocumentsContract.getDocumentId(uri);
+            if ("com.android.providers.media.documents".equals(uri.getAuthority())){
+                String id = docId.split(":")[1];//解析出数字格式的id
+                String selection = MediaStore.Images.Media._ID + "=" + id;
+                imagePath = getImagePath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,selection);
+            }else if ("com.android.providers.downloads.documents".equals(uri.getAuthority())){
+                Uri contentUri = ContentUris.withAppendedId(Uri.parse("content://downloads/public_downloads"),Long.valueOf(docId));
+                imagePath = getImagePath(contentUri,null);
+            }
+        }else if ("content".equalsIgnoreCase(uri.getScheme())){
+            //如果是content类型的Uri，则使用普通方式处理
+            imagePath = getImagePath(uri,null);
+        }else if ("file".equalsIgnoreCase(uri.getScheme())){
+            //如果是file类型的Uri，直接获取图片路径即可
+            imagePath = uri.getPath();
+        }
+        chooseImage =  createImage(imagePath);//根据图片路径显示图片
+    }
+
+    private void handleImageBeforeKitKat(Intent data){
+        Uri uri = data.getData();
+        String imagePath = getImagePath(uri,null);
+        chooseImage =  createImage(imagePath);
+    }
+
+    private String getImagePath(Uri uri,String selection){
+        String path = null;
+        //通过Uri和selection来获取真实的图片路径
+        Cursor cursor = getContentResolver().query(uri,null,selection,null,null);
+        if (cursor != null){
+            if (cursor.moveToFirst()){
+                path = cursor.getString(cursor.getColumnIndex(MediaStore.Images.Media.DATA));
+            }
+            cursor.close();
+        }
+        return path;
+    }
+
+    private  void  displayResult(final Bitmap bitmap,final String result){
+        detectHandleUpdate.post(new Runnable() {
+            @Override
+            public void run() {
+                LinearLayout layout = findViewById(R.id.detect_result);
+                LinearLayout child =  (LinearLayout)layout.getChildAt(detectIndex);
+                detectIndex = (detectIndex+1)%4;
+                ImageView iv =(ImageView)child.getChildAt(0);
+                iv.setImageBitmap(bitmap);
+                TextView tv = (TextView)child.getChildAt(1);
+                if (result==null)
+                    tv.setText("未知");
+                else tv.setText(result);
+            }
+        });
+    }
+
+    private Bitmap createImage(String imagePath){
+        if (imagePath != null){
+            Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+            return bitmap;
+        }else {
+            Toast.makeText(this,"failed to get iamge",Toast.LENGTH_SHORT).show();
+        }
+        return  null;
+    }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getSupportActionBar().hide();
         setContentView(R.layout.activity_main);
 
-        Button chooseBtn = (Button)findViewById(R.id.choose_image);
-        Button captureBtn = (Button)findViewById(R.id.capture_image);
-        Button realBtn = (Button)findViewById(R.id.real_image);
+        Button chooseBtn = findViewById(R.id.choose_image);
+        Button captureBtn = findViewById(R.id.capture_image);
+        Button realBtn = findViewById(R.id.real_image);
         chooseBtn.setOnClickListener(new MyClickListener());
         captureBtn.setOnClickListener(new MyClickListener());
         realBtn.setOnClickListener(new MyClickListener());
 
-        cameraView = (CameraBridgeViewBase) findViewById(R.id.camera_view);
+        cameraView =findViewById(R.id.camera_view);
         cameraView.setCvCameraViewListener(this);
-
         initializeOpenCVDependencies();
+        detectHandleUpdate=new Handler();
+
+        apiSpinner=findViewById(R.id.api_spin);
+        //为dataList赋值，将下面这些数据添加到数据源中
+        apiDataList = new ArrayList<String>();
+        apiDataList.add("内置算法");
+        apiDataList.add("Face++");
+
+        apiAdapter = new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,apiDataList);
+
+        //为适配器设置下拉列表下拉时的菜单样式。
+        apiAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+
+        //为spinner绑定我们定义好的数据适配器
+        apiSpinner.setAdapter(apiAdapter);
+        apiSpinner.setSelection(1);
+//为spinner绑定监听器，这里我们使用匿名内部类的方式实现监听器
+        apiSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                selectedApi=apiDataList.get(position);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                selectedApi=null;
+            }
+        });
 
         //初始化检测线程
         threadDetect=new Thread(new Runnable() {
@@ -373,16 +707,16 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                         Thread.sleep(100);
                         doExcuteDetect();
                     }catch (Exception ex){
-
+                        Log.e("Thread", "detect run: ", ex);
                     }
                 }
             }
         });
-
+        threadDetect.start();
         //权限请求
         RxPermissions rxPermission = new RxPermissions(this);
         rxPermission.requestEach(Manifest.permission.CAMERA,
-                Manifest.permission.READ_EXTERNAL_STORAGE)
+                Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.INTERNET)
                 .subscribe(new Consumer<Permission>() {
                     @Override
                     public void accept(Permission permission) throws Exception {
