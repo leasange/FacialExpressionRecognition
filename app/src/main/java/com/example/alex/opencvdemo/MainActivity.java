@@ -29,6 +29,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.view.View.OnClickListener;
+import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
@@ -63,7 +64,6 @@ import java.util.concurrent.TimeUnit;
 
 import io.reactivex.functions.Consumer;
 import okhttp3.Call;
-import okhttp3.Callback;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
@@ -631,9 +631,9 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         detectHandleUpdate.post(new Runnable() {
             @Override
             public void run() {
-                LinearLayout layout = findViewById(R.id.detect_result);
+                GridLayout layout = findViewById(R.id.detect_result);
                 LinearLayout child =  (LinearLayout)layout.getChildAt(detectIndex);
-                detectIndex = (detectIndex+1)%4;
+                detectIndex = (detectIndex+1)%layout.getChildCount();
                 ImageView iv =(ImageView)child.getChildAt(0);
                 iv.setImageBitmap(bitmap);
                 TextView tv = (TextView)child.getChildAt(1);
