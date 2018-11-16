@@ -409,35 +409,51 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     private  Mat matLin=new Mat();//临时图像对象
     @Override
     public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
-        if (!needChangeModel){
-            switch (detectModel){
+        Mat temp = inputFrame.rgba();
+        int w = temp.width();
+        int h = temp.height();
+        try {
+            Core.transpose(temp, matLin);
+            Core.flip(matLin, temp, 1);
+            //转置函数,将图像顺时针顺转（对换）
+            Core.flip(temp, matLin, 0);
+        } catch (Exception ex) {
+            Log.e("frame", ex.getMessage(), ex);
+        }
+        if (!needChangeModel) {
+            switch (detectModel) {
                 case 2:
                 case 3:
-                    Mat  temp=inputFrame.rgba();
-                    try{
-                        Core.transpose(temp, matLin);
-                        Core.flip(matLin, temp, 1);
-                        //转置函数,将图像顺时针顺转（对换）
-                        Core.flip(temp, matLin, 0);
-                        temp = matLin;
-                        Bitmap bitmap=Bitmap.createBitmap(temp.width(), temp.height(), Bitmap.Config.ARGB_8888);
-                        Utils.matToBitmap(temp,bitmap);
-                        cameraImage=bitmap;
-                        if (detectModel==2){
-                            detectModel=98;
+                    try {
+                        Bitmap bitmap = Bitmap.createBitmap(matLin.width(), matLin.height(), Bitmap.Config.ARGB_8888);
+                        Utils.matToBitmap(matLin, bitmap);
+                        cameraImage = bitmap;
+                        if (detectModel == 2) {
+                            detectModel = 98;
                         }
-                        if (detectModel==3){
-                            detectModel=99;
+                        if (detectModel == 3) {
+                            detectModel = 99;
                         }
-                    }catch (Exception ex){
-                        Log.e("frame",ex.getMessage(),ex);
+                    } catch (Exception ex) {
+                        Log.e("frame", ex.getMessage(), ex);
                     }
                     break;
                 default:
                     break;
             }
         }
-        return  inputFrame.rgba();
+        if (matLin.width() != w || matLin.height() != h) {
+            int new_w,new_h;
+            if ((matLin.width()/(double)matLin.height())>(w/(double)h)) {
+                new_h = w * matLin.height() / matLin.width();
+                new_w = w;
+            }else {
+                new_h = h;
+                new_w = h * matLin.width() / matLin.height();
+            }
+            Imgproc.resize(matLin,temp,new Size(new_w,new_h),0,0,Imgproc.INTER_AREA);
+        }
+        return temp;
     }
 
     private void doExcuteDetect(){
