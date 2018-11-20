@@ -5,7 +5,6 @@ import android.annotation.TargetApi;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -13,10 +12,9 @@ import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -47,6 +45,7 @@ import org.opencv.android.Utils;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfRect;
+import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -58,7 +57,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -100,10 +98,13 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     private static final String MODEL_FILE = "file:///android_asset/FacialExpressionReg.pb";
     private static final int IMAGE_SIZE = 48;
 
+    private  MTCNN mtcnn;
     public  static  final  int CHOOSE_PHOTO=2;
     private CascadeClassifier cascadeClassifier = null; //级联分类器
     private int absoluteFaceSize = 0;
     private Handler detectHandleUpdate=null;
+    private  int cameraIndex=CameraBridgeViewBase.CAMERA_ID_FRONT;
+    private PowerManager.WakeLock mWakeLock;
 
     public static Bitmap toGrayscale(Bitmap bmpOriginal) {
         int width, height;
@@ -119,24 +120,6 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
          paint.setColorFilter(f);
         c.drawBitmap(bmpOriginal, 0, 0, paint);
         return bmpGrayscale;
-    }
-
-    public static void putStringToTxt(String s, String name)
-    {
-        try
-        {
-            FileOutputStream outStream = new FileOutputStream("/sdcard/"+name+"cc.txt",true);
-            OutputStreamWriter writer = new OutputStreamWriter(outStream,"gb2312");
-            writer.write(s);
-            writer.write("/n");
-            writer.flush();
-            writer.close();
-            outStream.close();
-        }
-        catch (Exception e)
-        {
-            Log.e("m", "file write error");
-        }
     }
 
     //缩放图片,使用openCV，缩放方法采用area interpolation法
@@ -197,7 +180,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     //检测图片
     private String detectFaceEmotion(Bitmap bitmap,Rect[] facesArray)
     {
-        if ( facesArray==null)return  null;
+        if ( facesArray==null||facesArray.length==0)return  null;
         Bitmap destBitmap = Bitmap.createBitmap(bitmap, (int) (facesArray[0].tl().x), (int) (facesArray[0].tl().y), facesArray[0].width, facesArray[0].height);
         Bitmap scaleImage = scaleImage(destBitmap, 48, 48);
         Bitmap bitmap5 = toGrayscale(scaleImage);
@@ -257,6 +240,10 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         Rect[] facesArray = faces.toArray();
         if (facesArray.length > 0){
             for (int i = 0; i < facesArray.length; i++) {
+                facesArray[i].height+=facesArray[i].height*1/4;
+                if (facesArray[i].height+facesArray[i].y>imgGray.height()){
+                    facesArray[i].height=imgGray.height()-facesArray[i].y-1;
+                }
                 Imgproc.rectangle(imgGray, facesArray[i].tl(), facesArray[i].br(), new Scalar(0, 255, 0, 255), 3);
                 Log.d("ccx","index:" + i + "topLeft:" + facesArray[i].tl() + "bottomRight:" + facesArray[i].br()+ "height:" + facesArray[i].height);
             }
@@ -267,13 +254,59 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         return  facesArray;
     }
 
-    private  String detectFaceEmotion(Bitmap bitmap){
-        if(selectedApi.equals("Face++")){
-            return  detectFaceEmotionByFaceCPP(bitmap);
-        }else{
-            Rect[] facesArray=detectFaceRect(bitmap);
-            return  detectFaceEmotion(bitmap,facesArray);
+    //检测人脸
+    private  Rect[]  detectFaceRectByMTCNN(Bitmap bitmap){
+        try {
+            Vector<Box> boxes=mtcnn.detectFaces(bitmap,40);
+            Mat img = new Mat();
+            Utils.bitmapToMat(bitmap, img);
+            ArrayList<Rect> rects=new ArrayList<Rect>();
+            for (int i=0;i<boxes.size();i++) {
+                android.graphics.Rect rect = boxes.get(i).transform2Rect();
+                rect.top+=(rect.bottom-rect.top)/4;
+                Rect cvRect = new Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+                if (cvRect.x<0){
+                    cvRect.width+=cvRect.x;
+                    cvRect.x=0;
+                }
+                if (cvRect.width+cvRect.x>bitmap.getWidth()){
+                    cvRect.width=bitmap.getWidth()-cvRect.x;
+                }
+
+                if (cvRect.y<0){
+                    cvRect.height+=cvRect.y;
+                    cvRect.y=0;
+                }
+                if (cvRect.height+cvRect.y>bitmap.getHeight()){
+                    cvRect.height=bitmap.getHeight()-cvRect.y;
+                }
+                rects.add(cvRect);
+                Imgproc.rectangle(img, cvRect.tl(), cvRect.br(), new Scalar(0, 255, 0, 255), 3);
+            }
+            Utils.matToBitmap(img, bitmap);
+            Rect[] rectarr=new Rect[rects.size()];
+            return  rects.toArray(rectarr);
+        }catch (Exception e){
+            Log.e("facerect","detectFaceRectByMTCNN:",e);
         }
+        return null;
+    }
+
+
+    private  String detectFaceEmotion(Bitmap bitmap){
+        try{
+            if(selectedApi.equals("Face++")){
+                return  detectFaceEmotionByFaceCPP(bitmap);
+            }else  if (selectedApi.equals("微软Azure")){
+                return  detectFaceEmotionByMicroAzure(bitmap);
+            }else{
+                Rect[] facesArray=detectFaceRectByMTCNN(bitmap);
+                return  detectFaceEmotion(bitmap,facesArray);
+            }
+        }catch (Exception ex){
+            Log.e("facedetect","detectFaceEmotion:",ex);
+        }
+        return null;
     }
     private  String detectResult=null;
     private String detectFaceEmotionByFaceCPP(Bitmap bitmap){
@@ -361,6 +394,14 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                         else if (ret==happiness){
                             detectResult="高兴";
                         }
+                        double left=face_rectangle.getDouble("left");
+                        double top=face_rectangle.getDouble("top");
+                        double width=face_rectangle.getDouble("width");
+                        double height=face_rectangle.getDouble("height");
+                        Mat mat=new Mat();
+                        Utils.bitmapToMat(bitmap,mat);
+                        Imgproc.rectangle(mat,new Point(left,top),new Point(left+width,top+height),new Scalar(0, 255, 0, 255), 3);
+                        Utils.matToBitmap(mat,bitmap);
                     }catch (Exception ex){
                         Log.e("FACE++", "onResponse: ",ex );
                     }
@@ -371,6 +412,115 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             }
         }catch (Exception ex){
             Log.e("Face++", "detectFaceEmotionByFaceCPP: ", ex);
+        }
+
+        return detectResult;
+    }
+    private String detectFaceEmotionByMicroAzure(Bitmap bitmap){
+        try{
+            detectResult=null;
+            OkHttpClient client = new OkHttpClient();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
+
+            RequestBody body = RequestBody.create(MediaType.parse("application/octet-stream"), baos.toByteArray());
+            Request.Builder builder = new Request.Builder().url("https://westcentralus.api.cognitive.microsoft.com/face/v1.0/detect?returnFaceAttributes=emotion");
+            builder.addHeader("Ocp-Apim-Subscription-Key","c8b7c760b42b49adbb1444e42063ff49");
+            builder.addHeader("Content-Type","application/octet-stream");
+
+            Request request = builder.post(body).tag(null).build();
+
+            // readTimeout("请求超时时间" , 时间单位);
+            Call call = client.newBuilder().readTimeout(8000, TimeUnit.MILLISECONDS).build().newCall(request);
+            try {
+                Response response=call.execute();
+                if (response.isSuccessful()){
+                    String str = response.body().string();
+                    Log.i("Azure", response.message() + " , body " + str);
+                    /*
+                    [
+                          {
+                            "faceId": "c1e7830b-d2da-4223-8e43-5b62f62ed20f",
+                            "faceRectangle": {
+                              "top": 47,
+                              "left": 41,
+                              "width": 63,
+                              "height": 63
+                            },
+                            "faceAttributes": {
+                              "emotion": {
+                                "anger": 0.001,
+                                "contempt": 0.001,
+                                "disgust": 0,
+                                "fear": 0,
+                                "happiness": 0.002,
+                                "neutral": 0.914,
+                                "sadness": 0.082,
+                                "surprise": 0.001
+                              }
+                            }
+                          }
+                        ]
+                     */
+                    try {
+                        JSONArray jsonArray=new JSONArray(str);
+                        if (jsonArray.length()==0)return detectResult;
+                        JSONObject jsonObject=jsonArray.getJSONObject(0);
+                        JSONObject emotion = jsonObject.getJSONObject("faceAttributes").getJSONObject("emotion");
+                        JSONObject face_rectangle = jsonObject.getJSONObject("faceRectangle");
+                        double contempt=emotion.getDouble("contempt");
+                        double sadness=emotion.getDouble("sadness");
+                        double neutral=emotion.getDouble("neutral");
+                        double disgust=emotion.getDouble("disgust");
+                        double anger=emotion.getDouble("anger");
+                        double surprise=emotion.getDouble("surprise");
+                        double fear=emotion.getDouble("fear");
+                        double happiness=emotion.getDouble("happiness");
+                        double ret =Math.max(Math.max(Math.max(Math.max(Math.max(Math.max(Math.max(sadness,neutral),disgust),anger),surprise),fear),happiness),contempt);
+                        if (ret==contempt){
+                            detectResult="藐视";
+                        }
+                        else if ( ret == sadness){
+                            detectResult="难过";
+                        }else if (ret==neutral){
+                            detectResult="平静";
+                        }
+                        else if (ret==disgust){
+                            detectResult="厌恶";
+                        }
+                        else if (ret==anger){
+                            detectResult="生气";
+                        }
+                        else if (ret==surprise){
+                            detectResult="惊讶";
+                        }
+                        else if (ret==surprise){
+                            detectResult="恐惧";
+                        }
+                        else if (ret==happiness){
+                            detectResult="高兴";
+                        }
+                        double left=face_rectangle.getDouble("left");
+                        double top=face_rectangle.getDouble("top");
+                        double width=face_rectangle.getDouble("width");
+                        double height=face_rectangle.getDouble("height");
+                        Mat mat=new Mat();
+                        Utils.bitmapToMat(bitmap,mat);
+                        Imgproc.rectangle(mat,new Point(left,top),new Point(left+width,top+height),new Scalar(0, 255, 0, 255), 3);
+                        Utils.matToBitmap(mat,bitmap);
+                    }catch (Exception ex){
+                        Log.e("Azure", "onResponse: ",ex );
+                    }
+                }else{
+                    Log.e("Azure", "onResponse: "+response.body().string());
+                }
+
+            } catch (IOException e) {
+                Log.e("Azure", "detectFaceEmotionByMicroAzure json: ", e);
+            }
+        }catch (Exception ex){
+            Log.e("Azure", "detectFaceEmotionByMicroAzure: ", ex);
         }
 
         return detectResult;
@@ -405,7 +555,21 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     public void onCameraViewStopped() {
 
     }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mWakeLock != null) {
+            mWakeLock.acquire();
+        }
+    }
 
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (mWakeLock != null) {
+            mWakeLock.release();
+        }
+    }
     private  Mat matLin=new Mat();//临时图像对象
     @Override
     public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
@@ -413,10 +577,17 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         int w = temp.width();
         int h = temp.height();
         try {
-            Core.transpose(temp, matLin);
-            Core.flip(matLin, temp, 1);
-            //转置函数,将图像顺时针顺转（对换）
-            Core.flip(temp, matLin, 0);
+            if (cameraIndex==CameraBridgeViewBase.CAMERA_ID_FRONT){
+                Core.transpose(temp, matLin);
+                Core.flip(matLin, temp, 1);
+                //转置函数,将图像顺时针顺转（对换）
+                Core.flip(temp, matLin, 0);
+            }else{
+                Core.transpose(temp, matLin);
+                Core.flip(matLin, temp, 1);
+                matLin=temp;
+            }
+
         } catch (Exception ex) {
             Log.e("frame", ex.getMessage(), ex);
         }
@@ -452,6 +623,8 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                 new_w = h * matLin.width() / matLin.height();
             }
             Imgproc.resize(matLin,temp,new Size(new_w,new_h),0,0,Imgproc.INTER_AREA);
+        }else{
+            temp=matLin;
         }
         return temp;
     }
@@ -474,7 +647,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                     String ret =  detectFaceEmotion(cameraImage);
                     displayResult(cameraImage,ret);
                     cameraImage=null;
-                    if (detectModel==99){
+                     if (detectModel==99){
                         detectModel=3;
                     }
                 }
@@ -555,6 +728,21 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                         findViewById(R.id.capture_image).setSelected(false);
                         findViewById(R.id.real_image).setSelected(true);
                         break;
+                    case  R.id.camera_select:
+                        {
+                            if (cameraIndex==CameraBridgeViewBase.CAMERA_ID_FRONT){
+                                cameraView.setCameraIndex(CameraBridgeViewBase.CAMERA_ID_BACK);
+                                cameraIndex=CameraBridgeViewBase.CAMERA_ID_BACK;
+                                ((Button)findViewById(R.id.camera_select)).setText("前置相机");
+                            }else{
+                                cameraView.setCameraIndex(CameraBridgeViewBase.CAMERA_ID_FRONT);
+                                cameraIndex=CameraBridgeViewBase.CAMERA_ID_FRONT;
+                                ((Button)findViewById(R.id.camera_select)).setText("后置相机");
+                            }
+                            cameraView.disableView();
+                            cameraView.enableView();
+                        }
+                        break;
                     default:
                         break;
                 }
@@ -570,18 +758,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     }
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        switch (requestCode){/*
-            case TAKE_PHOTO:
-                if (resultCode == RESULT_OK){
-                    try {
-                        //将拍摄的照片显示出来
-                        Bitmap bitmap = BitmapFactory.decodeStream(getContentResolver().openInputStream(imageUri));
-                        picture.setImageBitmap(bitmap);
-                    }catch (FileNotFoundException e){
-                        e.printStackTrace();
-                    }
-                }
-                break;*/
+        switch (requestCode){
             case CHOOSE_PHOTO:
                 if (resultCode == RESULT_OK){
                     //判断手机系统版本号
@@ -675,12 +852,16 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         getSupportActionBar().hide();
         setContentView(R.layout.activity_main);
 
+        mtcnn=new MTCNN(getAssets());
+
         Button chooseBtn = findViewById(R.id.choose_image);
         Button captureBtn = findViewById(R.id.capture_image);
         Button realBtn = findViewById(R.id.real_image);
+        Button cameraSelect=findViewById(R.id.camera_select);
         chooseBtn.setOnClickListener(new MyClickListener());
         captureBtn.setOnClickListener(new MyClickListener());
         realBtn.setOnClickListener(new MyClickListener());
+        cameraSelect.setOnClickListener(new MyClickListener());
 
         cameraView =findViewById(R.id.camera_view);
         cameraView.setCvCameraViewListener(this);
@@ -692,6 +873,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         apiDataList = new ArrayList<String>();
         apiDataList.add("内置算法");
         apiDataList.add("Face++");
+        apiDataList.add("微软Azure");
 
         apiAdapter = new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,apiDataList);
 
@@ -729,6 +911,12 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             }
         });
         threadDetect.start();
+
+        PowerManager powerManager = (PowerManager)getSystemService(POWER_SERVICE);
+        if (powerManager != null) {
+            mWakeLock = powerManager.newWakeLock(PowerManager.FULL_WAKE_LOCK,getClass().getName());
+        }
+
         //权限请求
         RxPermissions rxPermission = new RxPermissions(this);
         rxPermission.requestEach(Manifest.permission.CAMERA,
@@ -752,23 +940,5 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                     }
                 });
 
-
-        /**
-         * 通过OpenCV管理Android服务，异步初始化OpenCV
-         */
-        /*
-        BaseLoaderCallback mLoaderCallback = new BaseLoaderCallback(this) {
-            @Override
-            public void onManagerConnected(int status) {
-                switch (status) {
-                    case LoaderCallbackInterface.SUCCESS:
-                        Log.i("opencv", "OpenCV loaded successfully");
-                        cameraView.enableView();
-                        break;
-                    default:
-                        break;
-                }
-            }
-        };*/
     }
 }
