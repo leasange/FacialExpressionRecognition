@@ -263,7 +263,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             ArrayList<Rect> rects=new ArrayList<Rect>();
             for (int i=0;i<boxes.size();i++) {
                 android.graphics.Rect rect = boxes.get(i).transform2Rect();
-                rect.top+=(rect.bottom-rect.top)/4;
+                rect.top+=(rect.bottom-rect.top)/5;
                 Rect cvRect = new Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
                 if (cvRect.x<0){
                     cvRect.width+=cvRect.x;
@@ -301,7 +301,12 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                 return  detectFaceEmotionByMicroAzure(bitmap);
             }else{
                 Rect[] facesArray=detectFaceRectByMTCNN(bitmap);
-                return  detectFaceEmotion(bitmap,facesArray);
+                String ret =  detectFaceEmotion(bitmap,facesArray);
+                Mat mat=new Mat();
+                Utils.bitmapToMat(bitmap,mat);
+                Imgproc.putText(mat, "Inner", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                Utils.matToBitmap(mat,bitmap);
+                return  ret;
             }
         }catch (Exception ex){
             Log.e("facedetect","detectFaceEmotion:",ex);
@@ -310,6 +315,8 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     }
     private  String detectResult=null;
     private String detectFaceEmotionByFaceCPP(Bitmap bitmap){
+        Mat mat=new Mat();
+        Utils.bitmapToMat(bitmap,mat);
         try{
             detectResult=null;
             OkHttpClient client = new OkHttpClient();
@@ -398,10 +405,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                         double top=face_rectangle.getDouble("top");
                         double width=face_rectangle.getDouble("width");
                         double height=face_rectangle.getDouble("height");
-                        Mat mat=new Mat();
-                        Utils.bitmapToMat(bitmap,mat);
                         Imgproc.rectangle(mat,new Point(left,top),new Point(left+width,top+height),new Scalar(0, 255, 0, 255), 3);
-                        Utils.matToBitmap(mat,bitmap);
                     }catch (Exception ex){
                         Log.e("FACE++", "onResponse: ",ex );
                     }
@@ -413,10 +417,13 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         }catch (Exception ex){
             Log.e("Face++", "detectFaceEmotionByFaceCPP: ", ex);
         }
-
+        Imgproc.putText(mat, "Face++", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
+        Utils.matToBitmap(mat,bitmap);
         return detectResult;
     }
     private String detectFaceEmotionByMicroAzure(Bitmap bitmap){
+        Mat mat=new Mat();
+        Utils.bitmapToMat(bitmap,mat);
         try{
             detectResult=null;
             OkHttpClient client = new OkHttpClient();
@@ -505,10 +512,9 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                         double top=face_rectangle.getDouble("top");
                         double width=face_rectangle.getDouble("width");
                         double height=face_rectangle.getDouble("height");
-                        Mat mat=new Mat();
-                        Utils.bitmapToMat(bitmap,mat);
+
                         Imgproc.rectangle(mat,new Point(left,top),new Point(left+width,top+height),new Scalar(0, 255, 0, 255), 3);
-                        Utils.matToBitmap(mat,bitmap);
+
                     }catch (Exception ex){
                         Log.e("Azure", "onResponse: ",ex );
                     }
@@ -522,7 +528,8 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         }catch (Exception ex){
             Log.e("Azure", "detectFaceEmotionByMicroAzure: ", ex);
         }
-
+        Imgproc.putText(mat, "Micro Azure", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
+        Utils.matToBitmap(mat,bitmap);
         return detectResult;
     }
 
@@ -840,6 +847,21 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     private Bitmap createImage(String imagePath){
         if (imagePath != null){
             Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+            if (bitmap.getWidth()>350||bitmap.getHeight()>350){
+                double ratio=bitmap.getWidth()/(double)bitmap.getHeight();
+                int w=350;
+                int h=350;
+                if (ratio>1){
+                    h=w*bitmap.getHeight()/bitmap.getWidth();
+                }else{
+                    w=h*bitmap.getWidth()/bitmap.getHeight();
+                }
+                Mat mat=new Mat();
+                Mat dst=new Mat();
+                Utils.bitmapToMat(bitmap,mat);
+                Imgproc.resize(mat,dst,new Size(w,h));
+                Utils.matToBitmap(mat,bitmap);
+            }
             return bitmap;
         }else {
             Toast.makeText(this,"failed to get iamge",Toast.LENGTH_SHORT).show();
