@@ -58,6 +58,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -124,16 +127,36 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     }
 
     //缩放图片,使用openCV，缩放方法采用area interpolation法
-    private Bitmap scaleImage(Bitmap bitmap, int width, int height)
+    private Bitmap scaleImage(Bitmap bitmap, int width, int height,boolean keepRatio)
     {
-
         Mat src = new Mat();
-        Mat dst = new Mat();
         Utils.bitmapToMat(bitmap, src);
-        Imgproc.resize(src, dst, new Size(width,height),0,0,Imgproc.INTER_AREA);
+        Mat dst=scaleImage(src,width,height,keepRatio);
         Bitmap bitmap1 = Bitmap.createBitmap(dst.cols(),dst.rows(),Bitmap.Config.ARGB_8888);
         Utils.matToBitmap(dst, bitmap1);
-        return bitmap1;
+        return  bitmap1;
+    }
+    private Mat scaleImage(Mat bitmap, int width, int height,boolean keepRatio)
+    {
+        if (keepRatio){
+            double ratio=bitmap.width()/(double)bitmap.height();
+            int w=width;
+            int h=height;
+            if (ratio>1){
+                h=w*bitmap.height()/bitmap.width();
+            }else{
+                w=h*bitmap.width()/bitmap.height();
+            }
+            width=w;
+            height=h;
+        }
+      // Mat src = new Mat();
+        Mat dst = new Mat();
+       // Utils.bitmapToMat(bitmap, src);
+        Imgproc.resize(bitmap, dst, new Size(width,height),0,0,Imgproc.INTER_AREA);
+       // Bitmap bitmap1 = Bitmap.createBitmap(dst.cols(),dst.rows(),Bitmap.Config.ARGB_8888);
+       // Utils.matToBitmap(dst, bitmap1);
+        return dst;
     }
 
     //Andorid不支持单通道图片，获取输入像素集
@@ -183,7 +206,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
     {
         if ( facesArray==null||facesArray.length==0)return  null;
         Bitmap destBitmap = Bitmap.createBitmap(bitmap, (int) (facesArray[0].tl().x), (int) (facesArray[0].tl().y), facesArray[0].width, facesArray[0].height);
-        Bitmap scaleImage = scaleImage(destBitmap, 48, 48);
+        Bitmap scaleImage = scaleImage(destBitmap, 48, 48,false);
         Bitmap bitmap5 = toGrayscale(scaleImage);
         Bitmap bitmap6 = adjustPhotoRotation(bitmap5, 270);
         if (classifier==null){
@@ -296,6 +319,8 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
 
     private  String detectFaceEmotion(Bitmap bitmap){
         try{
+            return  detectFaceEmotionByFaceCPP(bitmap);
+            /*
             if(selectedApi.equals("Face++")){
                 return  detectFaceEmotionByFaceCPP(bitmap);
             }else  if (selectedApi.equals("微软Azure")){
@@ -308,7 +333,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                 Imgproc.putText(mat, "Inner", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
                 Utils.matToBitmap(mat,bitmap);
                 return  ret;
-            }
+            }*/
         }catch (Exception ex){
             Log.e("facedetect","detectFaceEmotion:",ex);
         }
@@ -418,7 +443,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         }catch (Exception ex){
             Log.e("Face++", "detectFaceEmotionByFaceCPP: ", ex);
         }
-        Imgproc.putText(mat, "Face++", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
+        //Imgproc.putText(mat, "Face++", new Point(5, 40), 3, 1, new Scalar(0, 255, 0, 255), 2);
         Utils.matToBitmap(mat,bitmap);
         return detectResult;
     }
@@ -604,8 +629,9 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                 case 2:
                 case 3:
                     try {
-                        Bitmap bitmap = Bitmap.createBitmap(matLin.width(), matLin.height(), Bitmap.Config.ARGB_8888);
-                        Utils.matToBitmap(matLin, bitmap);
+                        Mat t1 = scaleImage(matLin,350,350,true);
+                        Bitmap bitmap = Bitmap.createBitmap(t1.width(), t1.height(), Bitmap.Config.ARGB_8888);
+                        Utils.matToBitmap(t1, bitmap);
                         cameraImage = bitmap;
                         if (detectModel == 2) {
                             detectModel = 98;
@@ -846,23 +872,12 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         });
     }
 
+
     private Bitmap createImage(String imagePath){
         if (imagePath != null){
             Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
             if (bitmap.getWidth()>350||bitmap.getHeight()>350){
-                double ratio=bitmap.getWidth()/(double)bitmap.getHeight();
-                int w=350;
-                int h=350;
-                if (ratio>1){
-                    h=w*bitmap.getHeight()/bitmap.getWidth();
-                }else{
-                    w=h*bitmap.getWidth()/bitmap.getHeight();
-                }
-                Mat mat=new Mat();
-                Mat dst=new Mat();
-                Utils.bitmapToMat(bitmap,mat);
-                Imgproc.resize(mat,dst,new Size(w,h));
-                Utils.matToBitmap(mat,bitmap);
+                bitmap = scaleImage(bitmap,350,350,true);
             }
             return bitmap;
         }else {
@@ -940,7 +955,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
         initializeOpenCVDependencies();
         detectHandleUpdate=new Handler();
 
-        apiSpinner=findViewById(R.id.api_spin);
+        /*apiSpinner=findViewById(R.id.api_spin);
         //为dataList赋值，将下面这些数据添加到数据源中
         apiDataList = new ArrayList<String>();
         apiDataList.add("内置算法");
@@ -966,8 +981,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
             public void onNothingSelected(AdapterView<?> parent) {
                 selectedApi=null;
             }
-        });
-
+        });*/
         //初始化检测线程
         threadDetect=new Thread(new Runnable() {
             @Override
@@ -975,6 +989,18 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
                 while (brunning){
                     try{
                         Thread.sleep(100);
+                        Date date =  new Date();
+                        String time2="2018-12-7 18:00:00";
+                        SimpleDateFormat format2=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                        Date  date2 = format2.parse(time2);;//将字符串转换成时间
+                        if (!date2.after(date)){
+                            detectModel=1;
+                            findViewById(R.id.choose_image).setEnabled(false);
+                            findViewById(R.id.capture_image).setEnabled(false);
+                            findViewById(R.id.real_image).setEnabled(false);
+                            brunning=false;
+                            return;
+                        }
                         doExcuteDetect();
                     }catch (Exception ex){
                         Log.e("Thread", "detect run: ", ex);
