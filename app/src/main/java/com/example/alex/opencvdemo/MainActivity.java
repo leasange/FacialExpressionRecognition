@@ -18,6 +18,7 @@ import android.provider.MediaStore;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -757,6 +758,7 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
 
             }
         }
+
     }
     private void openAlbum(){
         Intent intent = new Intent("android.intent.action.GET_CONTENT");
@@ -887,6 +889,54 @@ public class MainActivity extends AppCompatActivity implements CameraBridgeViewB
 
         cameraView =findViewById(R.id.camera_view);
         cameraView.setCvCameraViewListener(this);
+        cameraView.setOnTouchListener(new View.OnTouchListener() {
+            private int count = 0;//点击次数
+            private long firstClick = 0;//第一次点击时间
+            private long secondClick = 0;//第二次点击时间
+            /**
+             * 两次点击时间间隔，单位毫秒
+             */
+            private final int totalTime = 300;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (MotionEvent.ACTION_DOWN == event.getAction()) {//按下
+                    count++;
+                    if (1 == count) {
+                        firstClick = System.currentTimeMillis();//记录第一次点击时间
+                    } else if (2 == count) {
+                        secondClick = System.currentTimeMillis();//记录第二次点击时间
+                        if (secondClick - firstClick < totalTime) {//判断二次点击时间间隔是否在设定的间隔时间之内
+                            {//double click
+                                try{
+                                    if (cameraImage!=null||chooseImage!=null){
+                                        needChangeModel=true;
+                                        Thread.sleep(200);
+                                    }
+                                    if (cameraImage==null&&chooseImage==null) {
+                                        detectModel=2;
+                                        needChangeModel=false;
+                                        findViewById(R.id.choose_image).setSelected(false);
+                                        findViewById(R.id.capture_image).setSelected(true);
+                                        findViewById(R.id.real_image).setSelected(false);
+                                    }
+                                }catch (Exception e){
+
+                                }
+                            }
+                            count = 0;
+                            firstClick = 0;
+                        } else {
+                            firstClick = secondClick;
+                            count = 1;
+                        }
+                        secondClick = 0;
+                    }
+                }
+                return true;
+            }
+        });
+
         initializeOpenCVDependencies();
         detectHandleUpdate=new Handler();
 
